@@ -1,0 +1,46 @@
+# DELIBERATELY VULNERABLE — Module 2 baseline, not for production.
+#
+# This workflow reproduces two real attack patterns on purpose, so the later
+# hardening steps have something concrete to fix:
+#   1. Third-party actions pinned by mutable tag (@v4/@v5), not commit SHA —
+#      the mechanism the tj-actions/changed-files attack (CVE-2025-30066)
+#      exploited: a compromised bot credential retroactively moved version
+#      tags to point at malicious code.
+#   2. pull_request_target + unsafe interpolation of attacker-controlled input
+#      (the PR's branch name) directly into a shell step — the mechanism the
+#      Ultralytics PyPI cache-poisoning attack (Dec 2024) exploited.
+# It also puts a secret in scope in the same job that builds untrusted code —
+# the structural flaw SLSA Build Track L3 exists to eliminate.
+name: Insecure Build (Module 2 baseline)
+
+on:
+  pull_request_target:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Greet the branch (VULNERABLE - unsafe interpolation)
+        run: |
+          echo "Building for branch: ${{ github.head_ref }}"
+
+      - name: Build
+        run: make build VERSION=${{ github.sha }}
+
+      - name: "Publish" (secret in scope, same job that builds untrusted code)
+        env:
+          DEMO_SECRET: ${{ secrets.DEMO_SECRET }}
+        run: |
+          echo "Simulating publish step..."
+          echo "Using token: $DEMO_SECRET"
