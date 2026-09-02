@@ -38,7 +38,7 @@ jobs:
       - name: Build
         run: make build VERSION=${{ github.sha }}
 
-      - name: "Publish" (secret in scope, same job that builds untrusted code)
+      - name: "Publish (secret in scope, same job that builds untrusted code)"
         env:
           DEMO_SECRET: ${{ secrets.DEMO_SECRET }}
         run: |
