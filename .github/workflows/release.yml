@@ -1,0 +1,57 @@
+# Module 2 — SLSA Build Track L3.
+#
+# Unlike build.yml, this workflow does not build or sign anything itself.
+# The `build` job below delegates that entirely to a separate, reusable
+# workflow hosted in slsa-framework/slsa-github-generator (not this repo) —
+# that reusable workflow is the "control plane": it runs as its own
+# independent job with its own OIDC identity, performs the actual
+# compilation, and requests a short-lived signing certificate from Sigstore
+# that this repo's own code never sees or touches. `args` only computes
+# plain metadata (version string, commit, tree state) and hands it over as
+# input — it never has build or signing authority.
+#
+# The reusable workflow MUST be referenced by a full semver tag (@vX.Y.Z),
+# not a commit SHA — this is an explicit, intentional exception to our
+# SHA-pinning rule elsewhere: the builder verifies its own integrity
+# internally as part of the SLSA3 guarantee, so tag-pinning here is
+# considered sufficient by the SLSA project itself.
+name: SLSA Go releaser
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions: read-all
+
+jobs:
+  args:
+    runs-on: ubuntu-latest
+    outputs:
+      commit-date: ${{ steps.ldflags.outputs.commit-date }}
+      commit: ${{ steps.ldflags.outputs.commit }}
+      version: ${{ steps.ldflags.outputs.version }}
+      tree-state: ${{ steps.ldflags.outputs.tree-state }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned
+        with:
+          fetch-depth: 0
+      - id: ldflags
+        run: |
+          echo "commit-date=$(git log --date=iso8601-strict -1 --pretty=%ct)" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$(git describe --tags --always --dirty | cut -c2-)" >> "$GITHUB_OUTPUT"
+          echo "tree-state=$(if git diff --quiet; then echo clean; else echo dirty; fi)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: args
+    permissions:
+      id-token: write # To sign the provenance.
+      contents: write # To upload assets to the GitHub release.
+      actions: read # To read the workflow path.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.1.0
+    with:
+      go-version: "1.22"
+      evaluated-envs: "VERSION:${{ needs.args.outputs.version }}, COMMIT:${{ needs.args.outputs.commit }}, COMMIT_DATE:${{ needs.args.outputs.commit-date }}, TREE_STATE:${{ needs.args.outputs.tree-state }}"
