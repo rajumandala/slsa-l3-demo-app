@@ -1,0 +1,86 @@
+# Module 2 — hardened build workflow.
+#
+# Closes both holes proven live against the previous version of this file
+# (see docs/threat-model.md and PR #7's injection test):
+#
+#   1. Third-party actions are now pinned to an exact commit SHA, not a
+#      mutable version tag — closes the tj-actions/changed-files-class
+#      attack (CVE-2025-30066), where a compromised bot credential
+#      retroactively moved a tag to point at malicious code. A tag can be
+#      moved by whoever controls it; a commit SHA cannot be redefined.
+#
+#   2. The PR's branch name is now passed through an `env:` variable
+#      instead of being spliced directly into the shell script text via
+#      `${{ }}`. GitHub Actions substitutes `${{ }}` expressions into the
+#      script as raw text before bash ever runs it — that's what let a
+#      branch name like `pwn";cat$IFS/etc/os-release;echo"` turn into three
+#      separate shell commands. Routing the value through `env:` instead
+#      means bash receives it as a single environment variable's contents,
+#      not as text to re-parse — shell metacharacters inside it are just
+#      inert characters in a string.
+#
+#   3. Build and publish are now separate jobs on separate triggers.
+#      `build` runs on `pull_request` (not `pull_request_target`), which
+#      never has repository secrets in scope regardless of who opened the
+#      PR. `publish` — the only job that ever sees DEMO_SECRET — only runs
+#      on a push to `main`, i.e. only after a change has already gone
+#      through everything Source Track L3 requires (PR review, signed
+#      commit, no direct push). An untrusted PR can no longer reach the
+#      secret at all, from any step.
+#
+# This still does not reach SLSA Build Track L3: everything here is still
+# tenant-defined "build steps" with no separate control plane, so the
+# publish credential — even though it's now correctly scoped — is still
+# technically reachable by code we wrote ourselves. That gap is closed in
+# the next step, by delegating to slsa-framework/slsa-github-generator.
+name: Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0, pinned
+        with:
+          go-version: "1.22"
+
+      - name: Greet the branch (FIXED - value passed via env, not interpolated into script)
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        run: |
+          echo "Building for branch: $BRANCH_NAME"
+
+      - name: Build
+        run: make build VERSION=${{ github.sha }}
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0, pinned
+        with:
+          go-version: "1.22"
+
+      - name: Build
+        run: make build VERSION=${{ github.sha }}
+
+      - name: "Publish (only job that ever sees the secret, only runs post-merge)"
+        env:
+          DEMO_SECRET: ${{ secrets.DEMO_SECRET }}
+        run: |
+          echo "Simulating publish step..."
+          echo "Using token: $DEMO_SECRET"
