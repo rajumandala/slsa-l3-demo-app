@@ -1,0 +1,13 @@
+# Config consumed by slsa-framework/slsa-github-generator's Go builder
+# (internal/builders/go). Not a workflow itself — read by builder_go_slsa3.yml.
+version: 1
+
+goos: linux
+goarch: amd64
+
+main: ./cmd/hello
+
+binary: hello-{{ .Os }}-{{ .Arch }}
+
+ldflags:
+  - "-X main.version={{ .Env.VERSION }}"
